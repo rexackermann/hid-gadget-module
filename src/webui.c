@@ -598,6 +598,8 @@ int webui_send_frame(ws_client_t *client, uint8_t opcode, const char *payload,
   return 0;
 }
 
+#include <unistd.h> // For access()
+
 // Helper to extract JSON string value
 // Returns 0 on success, -1 if not found
 int json_get_string(const char *json, const char *key, char *out,
@@ -621,6 +623,15 @@ int json_get_string(const char *json, const char *key, char *out,
   strncpy(out, start, len);
   out[len] = '\0';
   return 0;
+}
+
+// Helper to get binary path (local or system)
+// Returns prefix string (e.g. "/system/bin" or ".")
+const char *get_bin_prefix() {
+  if (access("./hid-keyboard", X_OK) == 0) {
+    return ".";
+  }
+  return "/system/bin";
 }
 
 // Helper to extract JSON int value

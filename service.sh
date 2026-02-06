@@ -33,4 +33,19 @@ while true; do
 
     # Wait before checking again
     sleep 5
-done
+done &
+
+# Start WebUI server with auto-recovery monitoring
+(
+  while true; do
+    if ! pgrep -f "hid-webui" > /dev/null; then
+      # Use nohup to detach completely
+      nohup /system/bin/hid-webui > /dev/null 2>&1 &
+    fi
+    sleep 60
+  done
+) &
+
+# Ensure everything is settled
+log_print "Initialization complete. Service is running."
+exit 0

@@ -16,7 +16,10 @@ if [ ! -f "hid-webui" ] || [ ! -d "webui" ]; then
 fi
 
 # Make binaries executable
-chmod +x hid-webui system/bin/hid-webui 2>/dev/null
+# Make binaries executable
+chmod +x hid-webui system/bin/hid-* 2>/dev/null
+# Also try local binaries if they exist in CWD (for development)
+chmod +x hid-keyboard hid-mouse hid-consumer 2>/dev/null
 
 echo "✅ Starting WebUI server..."
 echo ""
