@@ -87,21 +87,49 @@ sed -i "s/version-v[0-9]\+\.[0-9]\+\.[0-9]\+/version-$TARGET_VER/" README.md
 sed -i "s/HID INDUSTRIAL v[0-9]\+\.[0-9]\+\.[0-9]\+/HID INDUSTRIAL $TARGET_VER/" src/tui.c
 sed -i "s/HID GADGET CONTROLLER v[0-9]\+\.[0-9]\+\.[0-9]\+/HID GADGET CONTROLLER $TARGET_VER/" src/hid-gadget.c
 
-# 6. Build
-echo ">> Building static binaries with Make..."
-make clean
+# 5. Build the static binaries for all architectures
+echo "Building static binaries for all architectures..."
 make static
 
-# 7. Zip
-echo ">> Zipping module..."
-ZIP_NAME="hid-gadget-module-$TARGET_VER.zip"
-# Exclude source hierarchy from zip if it's meant for Magisk? 
-# Usually, we want to include them for reference or keep it lean.
-# The previous zip logic included EVERYTHING.
-zip -r "$ZIP_NAME" . -x ".*" "blobs/orig/*" "*.zip" "scripts/*" "tests/*" "src/*" "include/*" "Makefile"
-# Actually, let's keep the zip structure as it was but with organized binaries
-# Wait, the zip previously included ducky.c etc.
-# Magisk doesn't use them, but it's fine.
+# 6. Build WebUI server binary
+echo "Building WebUI server..."
+make hid-webui
 
-echo ">> Done! Created $ZIP_NAME"
-ls -lh "$ZIP_NAME"
+# 7. Package the module
+ZIP_NAME="hid-gadget-module-${TARGET_VER}.zip"
+echo "Creating release ZIP: $ZIP_NAME"
+
+zip -r "$ZIP_NAME" \
+    blobs/ \
+    system/ \
+    META-INF/ \
+    module.prop \
+    service.sh \
+    install.sh \
+    uninstall.sh \
+    customize.sh \
+    webui/ \
+    -x "*.git*" \
+    -x "*.vscode*" \
+    -x "src/*" \
+    -x "include/*" \
+    -x "tests/*" \
+    -x "scripts/*" \
+    -x "*.c" \
+    -x "*.h" \
+    -x "*.o" \
+    -x "Makefile" \
+    -x "hid-gadget" \
+    -x "hid-gadget-mock"
+
+# Copy WebUI binary to system/bin
+echo "Adding WebUI binary to package..."
+cp hid-webui system/bin/hid-webui-bin
+zip -u "$ZIP_NAME" system/bin/hid-webui-bin
+rm system/bin/hid-webui-bin
+
+echo ""
+echo "✅ Release built successfully!"
+echo "   Version: $TARGET_VER"
+echo "   File: $ZIP_NAME"
+echo ""

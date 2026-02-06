@@ -3,5 +3,5 @@ name=HID Gadget
 version=v1.38.1
 versionCode=13801
 author=rexackermann
-description=USB HID Gadget with dependency-free C-based TUI keyboard and auto-recovery.
+description=USB HID Gadget with TUI, WebUI, DuckyScript 3.0, and auto-recovery.
 updateJson=https://raw.githubusercontent.com/rexackermann/hid-gadget-module/main/update.json
