@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "../include/hid_interface.h"
@@ -237,6 +239,98 @@ static char *base64_encode(const uint8_t *input, size_t length) {
 }
 
 // ============================================================================
+// File Serving Logic
+// ============================================================================
+
+const char *get_mime_type(const char *path) {
+  const char *dot = strrchr(path, '.');
+  if (!dot)
+    return "application/octet-stream";
+  if (strcmp(dot, ".html") == 0)
+    return "text/html";
+  if (strcmp(dot, ".css") == 0)
+    return "text/css";
+  if (strcmp(dot, ".js") == 0)
+    return "application/javascript";
+  if (strcmp(dot, ".png") == 0)
+    return "image/png";
+  return "text/plain";
+}
+
+int webui_serve_file(int client_fd, const char *path) {
+  // Simple mitigation against directory traversal
+  if (strstr(path, "..")) {
+    const char *response =
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+    send(client_fd, response, strlen(response), 0);
+    printf("\x1b[1;31m[WebUI] 403 Forbidden: %s\x1b[0m\n", path);
+    return -1;
+  }
+
+  // Resolve path
+  char resolved_path[512];
+  const char *base_path = "webui"; // Default webroot
+
+  if (strcmp(path, "/") == 0) {
+    snprintf(resolved_path, sizeof(resolved_path), "%s/index.html", base_path);
+  } else if (path[0] == '/') {
+    snprintf(resolved_path, sizeof(resolved_path), "%s%s", base_path, path);
+  } else {
+    snprintf(resolved_path, sizeof(resolved_path), "%s/%s", base_path, path);
+  }
+
+  // Fallback: Check if file exists, if not, try without webui/ prefix
+  // (legacy/dev support)
+  FILE *f = fopen(resolved_path, "rb");
+  if (!f) {
+    // Try resolving directly (relative to CWD)
+    const char *alt_path = (strcmp(path, "/") == 0)
+                               ? "index.html"
+                               : (path[0] == '/' ? path + 1 : path);
+    f = fopen(alt_path, "rb");
+    if (f) {
+      strcpy(resolved_path, alt_path); // Use this working path
+    }
+  }
+
+  if (!f) {
+    const char *response =
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+    send(client_fd, response, strlen(response), 0);
+    printf("\x1b[1;31m[WebUI] 404 Not Found: %s\x1b[0m\n", resolved_path);
+    return -1;
+  }
+
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+
+  char *file_content = malloc(fsize);
+  if (!file_content) {
+    fclose(f);
+    return -1;
+  }
+  fread(file_content, 1, fsize, f);
+  fclose(f);
+
+  char header[512];
+  snprintf(header, sizeof(header),
+           "HTTP/1.1 200 OK\r\n"
+           "Content-Type: %s\r\n"
+           "Content-Length: %ld\r\n"
+           "Connection: keep-alive\r\n\r\n",
+           get_mime_type(resolved_path), fsize);
+
+  send(client_fd, header, strlen(header), 0);
+  send(client_fd, file_content, fsize, 0);
+  free(file_content);
+
+  printf("\x1b[1;32m[WebUI] Served: %s (%ld bytes)\x1b[0m\n", resolved_path,
+         fsize);
+  return 0;
+}
+
+// ============================================================================
 // WebSocket Functions
 // ============================================================================
 
@@ -318,8 +412,8 @@ int webui_accept_client(int server_fd, ws_client_t *client) {
   return 0;
 }
 
-// Handle WebSocket handshake
-int webui_handle_handshake(ws_client_t *client) {
+// Handle HTTP/WebSocket request
+int webui_handle_request(ws_client_t *client) {
   char buffer[WEBUI_BUFFER_SIZE];
   ssize_t bytes_read = recv(client->fd, buffer, sizeof(buffer) - 1, 0);
 
@@ -329,41 +423,69 @@ int webui_handle_handshake(ws_client_t *client) {
 
   buffer[bytes_read] = '\0';
 
-  // Extract Sec-WebSocket-Key
-  char *key_start = strstr(buffer, "Sec-WebSocket-Key: ");
-  if (!key_start) {
-    return -1;
+  // Debug log first line of request
+  char *eol = strchr(buffer, '\r');
+  if (eol)
+    *eol = '\0';
+  printf("\x1b[1;33m[WebUI] Request: %s\x1b[0m\n", buffer);
+  if (eol)
+    *eol = '\r'; // Restore buffer
+
+  // Check for WebSocket upgrade
+  if (strstr(buffer, "Upgrade: websocket")) {
+    // Extract Sec-WebSocket-Key
+    char *key_start = strstr(buffer, "Sec-WebSocket-Key: ");
+    if (!key_start) {
+      printf("\x1b[1;31m[WebUI] Missing Sec-WebSocket-Key\x1b[0m\n");
+      return -1;
+    }
+
+    key_start += 19;
+    char *key_end = strstr(key_start, "\r\n");
+    if (!key_end)
+      return -1;
+
+    char client_key[256];
+    size_t key_len = key_end - key_start;
+    strncpy(client_key, key_start, key_len);
+    client_key[key_len] = '\0';
+
+    char *accept_key = webui_generate_accept_key(client_key);
+
+    char response[512];
+    snprintf(response, sizeof(response),
+             "HTTP/1.1 101 Switching Protocols\r\n"
+             "Upgrade: websocket\r\n"
+             "Connection: Upgrade\r\n"
+             "Sec-WebSocket-Accept: %s\r\n\r\n",
+             accept_key);
+
+    send(client->fd, response, strlen(response), 0);
+    free(accept_key);
+
+    client->handshake_done = true;
+    printf("\x1b[1;32m[WebUI] WebSocket Handshake completed\x1b[0m\n");
+    return 0; // Keep connection open
   }
 
-  key_start += 19; // Length of "Sec-WebSocket-Key: "
-  char *key_end = strstr(key_start, "\r\n");
-  if (!key_end) {
-    return -1;
+  // Handle Standard HTTP GET
+  if (strncmp(buffer, "GET ", 4) == 0) {
+    char *path_start = buffer + 4;
+    char *path_end = strchr(path_start, ' ');
+    if (path_end) {
+      char path[256];
+      size_t path_len = path_end - path_start;
+      if (path_len >= sizeof(path))
+        path_len = sizeof(path) - 1;
+      strncpy(path, path_start, path_len);
+      path[path_len] = '\0';
+
+      return webui_serve_file(client->fd, path);
+    }
   }
 
-  char client_key[256];
-  size_t key_len = key_end - key_start;
-  strncpy(client_key, key_start, key_len);
-  client_key[key_len] = '\0';
-
-  // Generate accept key
-  char *accept_key = webui_generate_accept_key(client_key);
-
-  // Send handshake response
-  char response[512];
-  snprintf(response, sizeof(response),
-           "HTTP/1.1 101 Switching Protocols\r\n"
-           "Upgrade: websocket\r\n"
-           "Connection: Upgrade\r\n"
-           "Sec-WebSocket-Accept: %s\r\n\r\n",
-           accept_key);
-
-  send(client->fd, response, strlen(response), 0);
-  free(accept_key);
-
-  client->handshake_done = true;
-  printf("\x1b[1;32m[WebUI] Handshake completed\x1b[0m\n");
-  return 0;
+  printf("\x1b[1;31m[WebUI] Unknown request type\x1b[0m\n");
+  return -1;
 }
 
 // Read WebSocket frame
@@ -380,7 +502,7 @@ int webui_read_frame(ws_client_t *client, ws_frame_t *frame) {
   frame->mask = (header[1] >> 7) & 0x1;
   frame->payload_len = header[1] & 0x7F;
 
-  size_t header_offset = 2;
+  // size_t header_offset = 2; // unused
 
   // Extended payload length
   if (frame->payload_len == 126) {
@@ -388,7 +510,7 @@ int webui_read_frame(ws_client_t *client, ws_frame_t *frame) {
     if (bytes_read <= 0)
       return -1;
     frame->payload_len = (header[2] << 8) | header[3];
-    header_offset += 2;
+    // header_offset += 2;
   } else if (frame->payload_len == 127) {
     bytes_read = recv(client->fd, header + 2, 8, 0);
     if (bytes_read <= 0)
@@ -397,7 +519,7 @@ int webui_read_frame(ws_client_t *client, ws_frame_t *frame) {
     for (int i = 0; i < 8; i++) {
       frame->payload_len = (frame->payload_len << 8) | header[2 + i];
     }
-    header_offset += 8;
+    // header_offset += 8;
   }
 
   // Masking key
@@ -491,7 +613,10 @@ int webui_process_message(ws_client_t *client, const char *message) {
 // Close client connection
 void webui_close_client(ws_client_t *client) {
   if (client->connected) {
-    webui_send_frame(client, WS_OPCODE_CLOSE, NULL, 0);
+    // Only send close frame if handshake was done (i.e. it was a WS connection)
+    if (client->handshake_done) {
+      webui_send_frame(client, WS_OPCODE_CLOSE, NULL, 0);
+    }
     close(client->fd);
     client->connected = false;
     printf("\x1b[1;31m[WebUI] Client disconnected\x1b[0m\n");
@@ -554,7 +679,11 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < WEBUI_MAX_CLIENTS; i++) {
       if (clients[i].connected && FD_ISSET(clients[i].fd, &readfds)) {
         if (!clients[i].handshake_done) {
-          if (webui_handle_handshake(&clients[i]) < 0) {
+          // Handle initial request (HTTP or WS Upgrade)
+          int res = webui_handle_request(&clients[i]);
+          if (res < 0) {
+            // Not a WebSocket upgrade (likely standard HTTP served), close
+            // connection
             webui_close_client(&clients[i]);
           }
         } else {
