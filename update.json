@@ -1,6 +1,6 @@
 {
-  "version": "v1.41.0",
-  "versionCode": 14100,
-  "zipUrl": "https://github.com/rexackermann/hid-gadget-module/releases/download/v1.41.0/hid-gadget-module-v1.41.0.zip",
+  "version": "v1.42.0",
+  "versionCode": 14200,
+  "zipUrl": "https://github.com/rexackermann/hid-gadget-module/releases/download/v1.42.0/hid-gadget-module-v1.42.0.zip",
   "changelog": "https://raw.githubusercontent.com/rexackermann/hid-gadget-module/main/CHANGELOG.md"
 }

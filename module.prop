@@ -1,7 +1,7 @@
 id=hid-gadget
 name=HID Gadget
-version=v1.41.0
-versionCode=14100
+version=v1.42.0
+versionCode=14200
 author=rexackermann
 description=USB HID Gadget with TUI, WebUI, DuckyScript 3.0, and auto-recovery.
 updateJson=https://raw.githubusercontent.com/rexackermann/hid-gadget-module/main/update.json
