@@ -1,7 +1,7 @@
 // WebSocket connection
 let ws = null;
 let reconnectInterval = null;
-const WS_URL = 'ws://localhost:8080';
+const WS_URL = 'ws://' + window.location.host;
 
 // State management
 const state = {
