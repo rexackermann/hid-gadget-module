@@ -637,23 +637,35 @@ int json_get_int(const char *json, const char *key, int *out) {
   return 0;
 }
 
+// HID Modifier Constants (Local Definitions)
+#define KEY_MOD_LCTRL 0x01
+#define KEY_MOD_LSHIFT 0x02
+#define KEY_MOD_LALT 0x04
+#define KEY_MOD_LMETA 0x08
+#define KEY_MOD_RCTRL 0x10
+#define KEY_MOD_RSHIFT 0x20
+#define KEY_MOD_RALT 0x40
+#define KEY_MOD_RMETA 0x80
+
 // Process incoming JSON message
 int webui_process_message(ws_client_t *client, const char *message) {
-  printf("\x1b[1;33m[WebUI] Received: %s\x1b[0m\n", message);
+  (void)client; // Unused
+  printf("\x1b[1;33m[WebUI] DEBUG: Processing message: %s\x1b[0m\n", message);
 
   // Parse "type"
   char type[32];
-  if (json_get_string(message, "type", type, sizeof(type)) < 0)
+  if (json_get_string(message, "type", type, sizeof(type)) < 0) {
+    printf(
+        "\x1b[1;31m[WebUI] ERROR: Failed to parse 'type' from JSON\x1b[0m\n");
     return -1;
+  }
+  printf("\x1b[1;34m[WebUI] DEBUG: Command Type: %s\x1b[0m\n", type);
 
   if (strcmp(type, "keyboard") == 0) {
     char action[32], key[32];
     json_get_string(message, "action", action, sizeof(action));
     json_get_string(message, "key", key, sizeof(key));
 
-    // Basic modifiers parsing (just checking for presence of substring for now)
-    // A robust parser would parse the array properly, but for this simpler
-    // implementation:
     uint8_t modifiers = 0;
     if (strstr(message, "LEFTCTRL"))
       modifiers |= KEY_MOD_LCTRL;
@@ -672,39 +684,14 @@ int webui_process_message(ws_client_t *client, const char *message) {
     if (strstr(message, "RIGHTMETA"))
       modifiers |= KEY_MOD_RMETA;
 
-    // Ensure hid_interface is initialized
-    const char *device = "/dev/hidg0"; // Keyboard
-    hid_init(
-        device); // This might be redundant if already open, but safe to call?
-    // hid_interface.c check: if fd > 0 returns 0. OK.
+    printf("\x1b[1;34m[WebUI] DEBUG: Keyboard Action: %s, Key: %s, Mods: "
+           "0x%02X\x1b[0m\n",
+           action, key, modifiers);
 
-    // Helper to map key string to hid code?
-    // We don't have a map function in C yet. We might need one or rely on JS
-    // sending codes? JS sends "A", "B", "ENTER". We need a map. For now, let's
-    // implement a minimal mapping or update JS to send scancodes. Mapping
-    // everything in C is tedious. Better approach: User hid-keyboard binary for
-    // execution!
-
+    // Executing via hid-keyboard tool
     char cmd[512];
-    // Construct raw command for hid-keyboard? Or link against hid_interface?
-    // hid_interface handles raw bytes.
+    char mod_str[256] = "";
 
-    // Since mapping "A" -> 4 is tedious here, let's call the `hid-keyboard`
-    // logic? No, we should do it directly.
-
-    // Lets assume we implement a tiny lookup or pass through to shell for now
-    // for simplicity? Shell is slow. Let's implement a basic lookup for common
-    // keys.
-
-    // Note: For this iteration, I'll rely on the existing tool `hid-keyboard`
-    // via command injection because re-implementing the keymap in C inside
-    // webui.c is huge work. Optimization: Implement keymap later or in
-    // `hid_interface`.
-
-    // WAIT! The user wants it to work. Invoking `/system/bin/hid-keyboard` is
-    // easiest. "action": "press", "key": "A", "modifiers": ...
-
-    char mod_str[64] = "";
     if (modifiers & KEY_MOD_LCTRL)
       strcat(mod_str, " --left-ctrl");
     if (modifiers & KEY_MOD_LSHIFT)
@@ -713,14 +700,28 @@ int webui_process_message(ws_client_t *client, const char *message) {
       strcat(mod_str, " --left-alt");
     if (modifiers & KEY_MOD_LMETA)
       strcat(mod_str, " --left-meta");
+    if (modifiers & KEY_MOD_RCTRL)
+      strcat(mod_str, " --right-ctrl");
+    if (modifiers & KEY_MOD_RSHIFT)
+      strcat(mod_str, " --right-shift");
+    if (modifiers & KEY_MOD_RALT)
+      strcat(mod_str, " --right-alt");
+    if (modifiers & KEY_MOD_RMETA)
+      strcat(mod_str, " --right-meta");
 
-    snprintf(cmd, sizeof(cmd),
-             "/system/bin/hid-keyboard %s %s > /dev/null 2>&1", key, mod_str);
-    system(cmd);
+    snprintf(cmd, sizeof(cmd), "/system/bin/hid-keyboard %s %s", key, mod_str);
+    printf("\x1b[1;32m[WebUI] EXEC: %s\x1b[0m\n", cmd);
 
+    int ret = system(cmd);
+    if (ret != 0)
+      printf("\x1b[1;31m[WebUI] ERROR: Command failed with code %d\x1b[0m\n",
+             ret);
+
+  } else if (strcmp(type, "mouse") == 0) {
   } else if (strcmp(type, "mouse") == 0) {
     char action[32];
     json_get_string(message, "action", action, sizeof(action));
+    printf("\x1b[1;34m[WebUI] DEBUG: Mouse Action: %s\x1b[0m\n", action);
 
     if (strcmp(action, "move") == 0) {
       int x = 0, y = 0;
@@ -728,43 +729,64 @@ int webui_process_message(ws_client_t *client, const char *message) {
       json_get_int(message, "y", &y);
 
       char cmd[128];
-      snprintf(cmd, sizeof(cmd),
-               "/system/bin/hid-mouse --move %d %d > /dev/null 2>&1", x, y);
+      snprintf(cmd, sizeof(cmd), "/system/bin/hid-mouse --move %d %d", x, y);
+      printf("\x1b[1;32m[WebUI] EXEC: %s\x1b[0m\n", cmd);
       system(cmd);
     } else if (strcmp(action, "click") == 0) {
       char button[32];
       json_get_string(message, "button", button, sizeof(button));
       char cmd[128];
-      snprintf(cmd, sizeof(cmd),
-               "/system/bin/hid-mouse --click %s > /dev/null 2>&1", button);
+      snprintf(cmd, sizeof(cmd), "/system/bin/hid-mouse --click %s", button);
+      printf("\x1b[1;32m[WebUI] EXEC: %s\x1b[0m\n", cmd);
       system(cmd);
     } else if (strcmp(action, "down") == 0) {
       char button[32];
       json_get_string(message, "button", button, sizeof(button));
       char cmd[128];
-      snprintf(cmd, sizeof(cmd),
-               "/system/bin/hid-mouse --press %s > /dev/null 2>&1", button);
+      snprintf(cmd, sizeof(cmd), "/system/bin/hid-mouse --press %s", button);
+      printf("\x1b[1;32m[WebUI] EXEC: %s\x1b[0m\n", cmd);
       system(cmd);
     } else if (strcmp(action, "up") == 0) {
       char button[32];
       json_get_string(message, "button", button, sizeof(button));
       char cmd[128];
-      snprintf(cmd, sizeof(cmd),
-               "/system/bin/hid-mouse --release %s > /dev/null 2>&1", button);
+      snprintf(cmd, sizeof(cmd), "/system/bin/hid-mouse --release %s", button);
+      printf("\x1b[1;32m[WebUI] EXEC: %s\x1b[0m\n", cmd);
       system(cmd);
     }
 
   } else if (strcmp(type, "consumer") == 0) {
     char action[32];
     json_get_string(message, "action", action, sizeof(action));
-    // Map action to args
+
     char cmd[128];
-    snprintf(cmd, sizeof(cmd), "/system/bin/hid-consumer %s > /dev/null 2>&1",
-             action);
+    snprintf(cmd, sizeof(cmd), "/system/bin/hid-consumer %s", action);
+    printf("\x1b[1;32m[WebUI] EXEC: %s\x1b[0m\n", cmd);
     system(cmd);
+  } else {
+    printf("\x1b[1;31m[WebUI] WARNING: Unknown command type: %s\x1b[0m\n",
+           type);
   }
 
   return 0;
+}
+char cmd[128];
+snprintf(cmd, sizeof(cmd),
+         "/system/bin/hid-mouse --release %s > /dev/null 2>&1", button);
+system(cmd);
+}
+}
+else if (strcmp(type, "consumer") == 0) {
+  char action[32];
+  json_get_string(message, "action", action, sizeof(action));
+  // Map action to args
+  char cmd[128];
+  snprintf(cmd, sizeof(cmd), "/system/bin/hid-consumer %s > /dev/null 2>&1",
+           action);
+  system(cmd);
+}
+
+return 0;
 }
 
 // Close client connection
