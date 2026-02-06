@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-v1.38.1-blue?style=for-the-badge&logo=android)
+![version](https://img.shields.io/badge/version-v1.40.0-blue?style=for-the-badge&logo=android)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Linux-orange?style=for-the-badge)
 ![Architecture](https://img.shields.io/badge/arch-ARM64%20%7C%20ARM%20%7C%20x86__64%20%7C%20x86-purple?style=for-the-badge)
