@@ -1,0 +1,27 @@
+#!/system/bin/sh
+
+# HID WebUI wrapper script
+# Serves the web interface and handles WebSocket connections
+
+WEBUI_DIR="/data/adb/modules/hid-gadget-module/webui"
+WEBUI_BIN="/system/bin/hid-webui-bin"
+
+# Check if server binary exists
+if [ ! -f "$WEBUI_BIN" ]; then
+    echo "Error: WebUI server binary not found"
+    exit 1
+fi
+
+# Check if webui directory exists
+if [ ! -d "$WEBUI_DIR" ]; then
+    echo "Error: WebUI directory not found at $WEBUI_DIR"
+    exit 1
+fi
+
+# Start the WebSocket server
+echo "Starting HID WebUI server..."
+echo "Open http://localhost:8080 in your browser"
+echo ""
+
+cd "$WEBUI_DIR" || exit 1
+exec "$WEBUI_BIN"
