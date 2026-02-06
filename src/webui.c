@@ -423,16 +423,14 @@ int webui_handle_request(ws_client_t *client) {
 
   buffer[bytes_read] = '\0';
 
-  // Debug log first line of request
-  char *eol = strchr(buffer, '\r');
-  if (eol)
-    *eol = '\0';
-  printf("\x1b[1;33m[WebUI] Request: %s\x1b[0m\n", buffer);
-  if (eol)
-    *eol = '\r'; // Restore buffer
+  // Verbose logging of headers
+  printf("\x1b[1;33m[WebUI] Request Headers:\n%s\x1b[0m\n", buffer);
 
-  // Check for WebSocket upgrade
-  if (strstr(buffer, "Upgrade: websocket")) {
+  // Check for WebSocket upgrade (Case-insensitive-ish)
+  if (strstr(buffer, "Upgrade: websocket") ||
+      strstr(buffer, "Upgrade: WebSocket") ||
+      strstr(buffer, "Upgrade: WEBSOCKET")) {
+
     // Extract Sec-WebSocket-Key
     char *key_start = strstr(buffer, "Sec-WebSocket-Key: ");
     if (!key_start) {
@@ -447,6 +445,8 @@ int webui_handle_request(ws_client_t *client) {
 
     char client_key[256];
     size_t key_len = key_end - key_start;
+    if (key_len >= sizeof(client_key))
+      key_len = sizeof(client_key) - 1;
     strncpy(client_key, key_start, key_len);
     client_key[key_len] = '\0';
 
@@ -780,24 +780,6 @@ int webui_process_message(ws_client_t *client, const char *message) {
   }
 
   return 0;
-}
-char cmd[128];
-snprintf(cmd, sizeof(cmd),
-         "/system/bin/hid-mouse --release %s > /dev/null 2>&1", button);
-system(cmd);
-}
-}
-else if (strcmp(type, "consumer") == 0) {
-  char action[32];
-  json_get_string(message, "action", action, sizeof(action));
-  // Map action to args
-  char cmd[128];
-  snprintf(cmd, sizeof(cmd), "/system/bin/hid-consumer %s > /dev/null 2>&1",
-           action);
-  system(cmd);
-}
-
-return 0;
 }
 
 // Close client connection
